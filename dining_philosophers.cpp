@@ -5,7 +5,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
-#include "C:\DevTools\PDCurses-3.9\curses.h" // you need to have PDCurses installed and properly linked for this to work: https://pdcurses.org/
+#include <curses.h> // PDCurses (Windows): https://pdcurses.org/
 
 using namespace std::chrono_literals;
 using std::string, std::mutex, std::thread, std::vector, std::atomic, std::unique_ptr;
@@ -24,7 +24,6 @@ class Philosopher;
 struct Fork {
     Philosopher *owner_ptr = nullptr;
     atomic<bool> dirty = true;
-    atomic<bool> in_use = false;
     atomic<bool> requested = false;
     mutex fork_mtx;
 };
@@ -229,11 +228,11 @@ void Philosopher::routine() {
         change_state(EATING);
         std::this_thread::sleep_for(random_time(min_eat, max_eat));
 
+        // lambda for releasing a single fork
         auto release_fork = [](Fork* _fork, Philosopher* _neighbor) {
             std::lock_guard<std::mutex> lock(_fork->fork_mtx);
 
             _fork->dirty  = true;
-            _fork->in_use = false;
 
             if (_fork->requested) {
                 _fork->requested = false;
@@ -262,6 +261,7 @@ bool Philosopher::check_forks() {
     std::unique_lock l_fork_lock(l_fork->fork_mtx, std::try_to_lock);
     std::unique_lock r_fork_lock(r_fork->fork_mtx, std::try_to_lock);
 
+    // lambda for acquirying a single fork
     auto try_acquire_fork = [this](Fork* _fork, std::unique_lock<std::mutex>& _lock) -> bool {
         // If we don't own the lock, we can't safely check or modify the fork's state
         if (!_lock.owns_lock()) {
@@ -273,29 +273,30 @@ bool Philosopher::check_forks() {
             return true;
         }
 
-        // If the fork is in use or is clean, we can't acquire it right now
-        if (_fork->in_use || !_fork->dirty) {
-            _fork->requested = true;
-            _lock.unlock();
-            return false;
+        // If the fork is dirty, we can acquire it (when we acquire, we clean the fork)
+        if(_fork->dirty) {
+            _fork->owner_ptr = this;
+            _fork->dirty = false;
+            return true;
         }
-
-        // If the fork is dirty and not in use, we can acquire it
-        _fork->owner_ptr = this;
-        _fork->dirty = false;
-        return true;
+        
+        // Otherwise, the fork isn't our and we can't acquire it right now
+        _fork->requested = true;
+        _lock.unlock();
+        return false; 
     };
     
     bool l_acquired = try_acquire_fork(l_fork, l_fork_lock);
     bool r_acquired = try_acquire_fork(r_fork, r_fork_lock);
 
-    // if we acquired both forks, we can eat. If not, we can't yet eat and we will try again later
+    // if we acquired both forks - we clean them and eat
     if (l_acquired && r_acquired) {
-        l_fork->in_use = true;
-        r_fork->in_use = true;
+        l_fork->dirty = false;
+        r_fork->dirty = false;
         return true;
     }
 
+    // otherwise we must try again later
     return false;
 }
 
