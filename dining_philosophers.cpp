@@ -5,7 +5,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
-#include <curses.h> // PDCurses (Windows): https://pdcurses.org/
+#include <curses.h>
 
 using namespace std::chrono_literals;
 using std::string, std::mutex, std::thread, std::vector, std::atomic, std::unique_ptr;
@@ -174,12 +174,12 @@ void display_loop(vector<unique_ptr<Philosopher>>& _philosophers) {
 
         for (size_t i = 0; i < _philosophers.size(); i++) {
             auto& p = _philosophers[i];
-            mvprintw(2+i,0,"Philosopher %d : %-7s | T: %4lldms | W: %4lldms | E: %4lldms",
+            mvprintw(2+i,0,"Philosopher %zu : %-7s | T: %4lldms | W: %4lldms | E: %4lldms",
                 i,
                 state_to_string(p->get_state()).c_str(),
-                p->get_state_time(THINKING).count(),
-                p->get_state_time(WAITING).count(),
-                p->get_state_time(EATING).count());
+                (long long)p->get_state_time(THINKING).count(),
+                (long long)p->get_state_time(WAITING).count(),
+                (long long)p->get_state_time(EATING).count());
         }
 
         refresh();
