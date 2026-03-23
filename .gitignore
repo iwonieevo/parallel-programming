@@ -42,3 +42,9 @@
 
 # VS Code settings
 .vscode/
+
+.DS_Store
+
+.idea
+
+cmake-build-debug/

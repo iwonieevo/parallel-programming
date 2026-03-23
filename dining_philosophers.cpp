@@ -103,12 +103,12 @@ int main(int argc, char *argv[]) {
 
     for (size_t i = 0; i < N; i++) {
         philosophers.emplace_back(
-            std::make_unique<Philosopher>(
-                &forks[i],
-                &forks[(i + 1) % N],
-                minThink, maxThink,
-                minEat, maxEat
-            )
+                std::make_unique<Philosopher>(
+                        &forks[i],
+                        &forks[(i + 1) % N],
+                        minThink, maxThink,
+                        minEat, maxEat
+                )
         );
     }
 
@@ -116,8 +116,8 @@ int main(int argc, char *argv[]) {
         auto& p = philosophers[i];
 
         p->set_neighbors(
-            philosophers[(i - 1 + N) % N].get(),
-            philosophers[(i + 1) % N].get()
+                philosophers[(i - 1 + N) % N].get(),
+                philosophers[(i + 1) % N].get()
         );
     }
 
@@ -175,11 +175,11 @@ void display_loop(vector<unique_ptr<Philosopher>>& _philosophers) {
         for (size_t i = 0; i < _philosophers.size(); i++) {
             auto& p = _philosophers[i];
             mvprintw(2+i,0,"Philosopher %zu : %-7s | T: %4lldms | W: %4lldms | E: %4lldms",
-                i,
-                state_to_string(p->get_state()).c_str(),
-                (long long)p->get_state_time(THINKING).count(),
-                (long long)p->get_state_time(WAITING).count(),
-                (long long)p->get_state_time(EATING).count());
+                     i,
+                     state_to_string(p->get_state()).c_str(),
+                     (long long)p->get_state_time(THINKING).count(),
+                     (long long)p->get_state_time(WAITING).count(),
+                     (long long)p->get_state_time(EATING).count());
         }
 
         refresh();
@@ -187,7 +187,7 @@ void display_loop(vector<unique_ptr<Philosopher>>& _philosophers) {
         std::this_thread::sleep_for(100ms);
 
         int ch = getch();
-        
+
         if (ch == 27) { // ESC pressed
             sim_running = false;
             for (auto& p : _philosophers) {
@@ -206,7 +206,7 @@ void display_loop(vector<unique_ptr<Philosopher>>& _philosophers) {
 }
 
 void Philosopher::routine() {
-    curr_state_start = std::chrono::steady_clock::now(); 
+    curr_state_start = std::chrono::steady_clock::now();
 
     while (!stop_requested) {
         change_state(THINKING);
@@ -251,7 +251,7 @@ void Philosopher::change_state(State _new_state) {
     if (curr_state != _new_state) {
         auto now = std::chrono::steady_clock::now();
         state_times[curr_state] += std::chrono::duration_cast<std::chrono::milliseconds>(now - curr_state_start);
-        
+
         curr_state = _new_state;
         curr_state_start = now;
     }
@@ -279,13 +279,13 @@ bool Philosopher::check_forks() {
             _fork->dirty = false;
             return true;
         }
-        
+
         // Otherwise, the fork isn't our and we can't acquire it right now
         _fork->requested = true;
         _lock.unlock();
-        return false; 
+        return false;
     };
-    
+
     bool l_acquired = try_acquire_fork(l_fork, l_fork_lock);
     bool r_acquired = try_acquire_fork(r_fork, r_fork_lock);
 
@@ -340,7 +340,7 @@ void Philosopher::set_neighbors(Philosopher* _left, Philosopher* _right) {
 }
 
 Philosopher::Philosopher(Fork* _l_fork, Fork* _r_fork, int _min_think, int _max_think, int _min_eat, int _max_eat)
-                        : l_fork(_l_fork), r_fork(_r_fork), min_think(_min_think), max_think(_max_think), min_eat(_min_eat), max_eat(_max_eat) {
+        : l_fork(_l_fork), r_fork(_r_fork), min_think(_min_think), max_think(_max_think), min_eat(_min_eat), max_eat(_max_eat) {
     curr_state = THINKING;
     l_neighbor = nullptr;
     r_neighbor = nullptr;
