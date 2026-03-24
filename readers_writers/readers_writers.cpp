@@ -3,7 +3,9 @@
 #include <thread>
 #include <random>
 #include <atomic>
-#include <curses.h>
+#include <mutex>
+#include <chrono>
+#include "include/terminal.h"
 #include "include/quotes.h"
 
 using namespace std::chrono_literals;
@@ -19,6 +21,7 @@ struct Book {
 
     std::atomic<int> active_readers = 0;
     std::atomic<int> reads_since_last_write = 0;
+    std::atomic<bool> writer_waiting = false;
     std::atomic<bool> writing = false;
     std::atomic<bool> first_write_done = false;
 };
@@ -39,12 +42,15 @@ void writer_task(int id, size_t numBooks, unsigned long maxWait, std::vector<Boo
 
         std::unique_lock<std::mutex> lock(book.mtx);
 
+        book.writer_waiting = true;
         book.cv.wait(lock, [&book] {
             bool ratio_met = !book.first_write_done || (book.reads_since_last_write >= 3);
-            return !book.writing && book.active_readers == 0 && ratio_met;
+            return !sim_running || (!book.writing && book.active_readers == 0 && ratio_met);
         });
+        if (!sim_running) { book.writer_waiting = false; book.cv.notify_all(); return; }
 
         book.writing = true;
+        book.writer_waiting = false;
 
         book.content = new_quote;
         {
@@ -68,7 +74,12 @@ void reader_task(int id, size_t numBooks, unsigned long maxWait, std::vector<Boo
         Book& book = library[book_idx];
         std::unique_lock<std::mutex> lock(book.mtx);
 
-        book.cv.wait(lock, [&book] { return book.first_write_done && !book.writing; });
+        book.cv.wait(lock, [&book] {
+            bool ratio_met = !book.first_write_done || (book.reads_since_last_write >= 3);
+            return !sim_running || (book.first_write_done && !book.writing && !(book.writer_waiting && ratio_met));
+        });
+        if (!sim_running) return;
+
         book.active_readers++;
         lock.unlock();
         {
@@ -124,11 +135,18 @@ int main(int argc, char *argv[]) {
         readers.emplace_back(reader_task, i + 1, numBooks, maxReadersWait, std::ref(library));
     }
 
-    while(sim_running){
+    RawTerminal terminal;
+    while (sim_running) {
         std::this_thread::sleep_for(100ms);
+        char ch = 0;
+        if (read(STDIN_FILENO, &ch, 1) > 0 && ch == 27)
+            sim_running = false;
+    }
 
-        int ch = getch();
-        if (ch == 27) sim_running = false;
+    sim_running = false;
+    for (auto& book : library) {
+        std::lock_guard<std::mutex> lock(book.mtx);
+        book.cv.notify_all();
     }
 
     for (auto& w : writers) w.join();
