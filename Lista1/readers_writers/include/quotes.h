@@ -17,35 +17,33 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* use
 std::string getQuote() {
     CURL* curl;
     CURLcode res;
-    std::string readBuffer = "";
+    std::string readBuffer;
 
     curl = curl_easy_init();
-    if(curl) {
-        std::string url = "https://api.adviceslip.com/advice";
-
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, "https://dummyjson.com/quotes/random");
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
 
         res = curl_easy_perform(curl);
         curl_easy_cleanup(curl);
 
-        if(res == CURLE_OK) {
+        if (res == CURLE_OK) {
             try {
                 auto j = json::parse(readBuffer);
-                auto slip = j["slip"];
-                std::string advice = slip["advice"].get<std::string>();
-
-                return advice;
+                // flat object: {"id": 62, "quote": "...", "author": "..."}
+                std::string quote  = j["quote"].get<std::string>();
+                std::string author = j["author"].get<std::string>();
+                return "\"" + quote + "\" — " + author;
 
             } catch (const std::exception& e) {
-                return "JSON Error: " + std::string(e.what()) + " | Buffer: " + readBuffer;
+                return "JSON Error: " + std::string(e.what());
             }
         }
     }
     return "Connection error.";
 }
-
 #endif //PRR_QUOTES_H

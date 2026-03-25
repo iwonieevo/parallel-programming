@@ -21,7 +21,7 @@ struct Book {
 
     std::atomic<int> active_readers = 0;
     std::atomic<int> reads_since_last_write = 0;
-    std::atomic<bool> writer_waiting = false;
+    std::atomic<int> writers_waiting = 0;
     std::atomic<bool> writing = false;
     std::atomic<bool> first_write_done = false;
 };
@@ -42,15 +42,15 @@ void writer_task(int id, size_t numBooks, unsigned long maxWait, std::vector<Boo
 
         std::unique_lock<std::mutex> lock(book.mtx);
 
-        book.writer_waiting = true;
+        book.writers_waiting++;
         book.cv.wait(lock, [&book] {
             bool ratio_met = !book.first_write_done || (book.reads_since_last_write >= 3);
             return !sim_running || (!book.writing && book.active_readers == 0 && ratio_met);
         });
-        if (!sim_running) { book.writer_waiting = false; book.cv.notify_all(); return; }
+        if (!sim_running) { book.writers_waiting = false; book.cv.notify_all(); return; }
 
         book.writing = true;
-        book.writer_waiting = false;
+        book.writers_waiting--;
 
         book.content = new_quote;
         {
@@ -76,7 +76,7 @@ void reader_task(int id, size_t numBooks, unsigned long maxWait, std::vector<Boo
 
         book.cv.wait(lock, [&book] {
             bool ratio_met = !book.first_write_done || (book.reads_since_last_write >= 3);
-            return !sim_running || (book.first_write_done && !book.writing && !(book.writer_waiting && ratio_met));
+            return !sim_running || (book.first_write_done && !book.writing && !(book.writers_waiting && ratio_met));
         });
         if (!sim_running) return;
 
