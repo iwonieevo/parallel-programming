@@ -35,3 +35,30 @@ Example:
 ```sh
 ./dining_philosophers 5 100 500 100 500
 ```
+
+## Writers and readers
+
+### Requirements
+- A C++ compiler (e.g. `g++`)
+
+#### Linux
+```sh
+g++ readers_writers/readers_writers.cpp -o readers_writers -lcurl
+```
+
+
+
+### Usage
+```sh
+./writers_readers <numBooks> <numWriters> <numReaders> <maxWritersWait> <maxReadersWait>
+```
+- **numBooks** - number of books
+- **numWriters** - number of writers
+- **numReaders** - number of readers
+- **minEat** - maximum waiting time of each writer in milliseconds (until the next writing) [ms]
+- **maxEat** - maximum waiting time of each reader in milliseconds (until the next reading) [ms]
+
+Example:
+```sh
+./readers_writers 3 3 10 5000 5000
+```
