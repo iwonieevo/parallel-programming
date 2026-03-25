@@ -1,11 +1,12 @@
 #include <iostream>
 #include <vector>
-#include <thread>
 #include <random>
+#include <thread>
 #include <atomic>
 #include <mutex>
-#include <chrono>
-#include "include/terminal.h"
+#include <condition_variable>
+#include <curses.h>
+
 #include "include/quotes.h"
 
 using namespace std::chrono_literals;
@@ -135,13 +136,18 @@ int main(int argc, char *argv[]) {
         readers.emplace_back(reader_task, i + 1, numBooks, maxReadersWait, std::ref(library));
     }
 
-    RawTerminal terminal;
+    initscr();
+    noecho();
+    cbreak();
+    nodelay(stdscr, TRUE);  // non-blocking getch
+
     while (sim_running) {
         std::this_thread::sleep_for(100ms);
-        char ch = 0;
-        if (read(STDIN_FILENO, &ch, 1) > 0 && ch == 27)
+        if (getch() == 27)  // ESC
             sim_running = false;
     }
+
+    endwin();
 
     sim_running = false;
     for (auto& book : library) {
@@ -153,5 +159,10 @@ int main(int argc, char *argv[]) {
     for (auto& r : readers) r.join();
 
     return 0;
-
 }
+
+// TODO: - couts to mvprintw
+//       - nlohmann as a lib dependency (not in the repo)
+//       - quotes.h -> readers_writers.cpp
+//       - clean tasks.json
+//       - better ncurses display - so it is a proper table with colors
