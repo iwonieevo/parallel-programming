@@ -1,15 +1,17 @@
 #include <iostream>
 #include <vector>
+#include <string>
+#include <ctime>
 #include <random>
 #include <thread>
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
-#include <curses.h>
-
-#include "include/quotes.h"
+#include <json.hpp>
+#include <curl/curl.h>
 
 using namespace std::chrono_literals;
+using json = nlohmann::json;
 
 std::mutex print_mtx;
 std::atomic<bool> sim_running = true;
@@ -27,7 +29,46 @@ struct Book {
     std::atomic<bool> first_write_done = false;
 };
 
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
+    userp->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
+std::string getQuote() {
+    CURL* curl;
+    CURLcode res;
+    std::string readBuffer;
+
+    curl = curl_easy_init();
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, "https://dummyjson.com/quotes/random");
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+
+        res = curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+
+        if (res == CURLE_OK) {
+            try {
+                auto j = json::parse(readBuffer);
+                // flat object: {"id": 62, "quote": "...", "author": "..."}
+                std::string quote  = j["quote"].get<std::string>();
+                std::string author = j["author"].get<std::string>();
+                return "\"" + quote + "\" — " + author;
+
+            } catch (const std::exception& e) {
+                return "JSON Error: " + std::string(e.what());
+            }
+        }
+    }
+    return "Connection error.";
+}
+
 int getRandom(int min, int max) {
+    if (min > max) return min;
     static thread_local std::mt19937 generator(std::random_device{}());
     std::uniform_int_distribution<int> distribution(min, max);
     return distribution(generator);
@@ -117,7 +158,6 @@ int main(int argc, char *argv[]) {
         maxWritersWait = std::stoul(argv[4]);
         maxReadersWait = std::stoul(argv[5]);
     }
-
     catch (const std::exception& e) {
         std::cerr << "Invalid numeric argument: " << e.what() << std::endl;
         return 1;
@@ -127,29 +167,16 @@ int main(int argc, char *argv[]) {
     std::vector<std::thread> writers;
     std::vector<std::thread> readers;
 
-
-    for (size_t i = 0; i < numWriters; ++i) {
+    for (size_t i = 0; i < numWriters; ++i)
         writers.emplace_back(writer_task, i + 1, numBooks, maxWritersWait, std::ref(library));
-    }
 
-    for (size_t i = 0; i < numReaders; ++i) {
+    for (size_t i = 0; i < numReaders; ++i)
         readers.emplace_back(reader_task, i + 1, numBooks, maxReadersWait, std::ref(library));
-    }
 
-    initscr();
-    noecho();
-    cbreak();
-    nodelay(stdscr, TRUE);  // non-blocking getch
-
-    while (sim_running) {
-        std::this_thread::sleep_for(100ms);
-        if (getch() == 27)  // ESC
-            sim_running = false;
-    }
-
-    endwin();
-
+    std::cout << "Simulation running. Press Enter to stop...\n";
+    std::cin.get();
     sim_running = false;
+
     for (auto& book : library) {
         std::lock_guard<std::mutex> lock(book.mtx);
         book.cv.notify_all();
@@ -158,11 +185,6 @@ int main(int argc, char *argv[]) {
     for (auto& w : writers) w.join();
     for (auto& r : readers) r.join();
 
+    std::cout << "Simulation stopped.\n";
     return 0;
 }
-
-// TODO: - couts to mvprintw
-//       - nlohmann as a lib dependency (not in the repo)
-//       - quotes.h -> readers_writers.cpp
-//       - clean tasks.json
-//       - better ncurses display - so it is a proper table with colors
