@@ -1,18 +1,16 @@
 #include <iostream>
-#include <thread>
 #include <vector>
-#include <semaphore>
 #include <chrono>
 #include <random>
-#include <atomic>
-#include <string>
 #include <queue>
+#include <thread>
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
-#include <curses.h>
+#include <semaphore>
 
 
-static constexpr std::ptrdiff_t MAX_SEM = 1024;
+constexpr size_t MAX_SEM = 1024;
 
 class FifoGate {
     std::queue<int> fifoQueue;
@@ -20,7 +18,7 @@ class FifoGate {
     std::condition_variable cv;
 
 public:
-    void enter(int id, std::atomic<bool>& running) {
+    void enter(int id, const std::atomic<bool>& running) {
         std::unique_lock<std::mutex> lock(mtx);
         fifoQueue.push(id);
         cv.wait(lock, [&] { return !running || fifoQueue.front() == id; });
@@ -28,105 +26,123 @@ public:
 
     void exit() {
         std::unique_lock<std::mutex> lock(mtx);
-        if (!fifoQueue.empty()) {
+        if (!fifoQueue.empty()) 
             fifoQueue.pop();
-        }
+        cv.notify_all();
+    }
+    
+    void wakeAll() {
+        std::unique_lock<std::mutex> lock(mtx);
         cv.notify_all();
     }
 };
 
-std::counting_semaphore<MAX_SEM>* matchboxSem = nullptr;
-std::counting_semaphore<MAX_SEM>* tamperSem = nullptr;
-std::binary_semaphore* screenSem = nullptr;
+class ScreenPrinter {
+    std::binary_semaphore sem{1};
+    
+public:
+    void print(int id, const std::string& msg) {
+        sem.acquire();
+        std::cout << "[Smoker " << id << "] " << msg << std::endl;
+        sem.release();
+    }
+};
 
-FifoGate matchboxQueue;
-FifoGate tamperQueue;
-
-void print(int id, const std::string& msg) {
-    screenSem->acquire();
-    std::cout << "[Smoker " << id << "] " << msg << std::endl;
-    screenSem->release();
-}
-
-void wait(int ms) {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> distr(int(ms/2), ms);
+void randomWait(unsigned long maxMs) {
+    static thread_local std::random_device rd;
+    static thread_local std::mt19937 gen(rd());
+    std::uniform_int_distribution<> distr(maxMs/2, maxMs);
     std::this_thread::sleep_for(std::chrono::milliseconds(distr(gen)));
 }
 
-void smoker(int id, int maxWait, std::atomic<bool>& running) {
-    while (running) {
-        print(id, "waiting for a TAMPER");
-        tamperQueue.enter(id, running);
-        if (!running) { tamperQueue.exit(); break; }
+struct Resources {
+    std::counting_semaphore<MAX_SEM> matchboxes;
+    std::counting_semaphore<MAX_SEM> tampers;
+    ScreenPrinter printer;
+    FifoGate matchboxQueue;
+    FifoGate tamperQueue;
+    
+    Resources(unsigned long numMatchboxes, unsigned long numTampers) 
+        : matchboxes(numMatchboxes), tampers(numTampers) {}
 
-        tamperSem->acquire();
-        tamperQueue.exit();
-
-        print(id, ">>> tampering tobacco");
-        wait(maxWait/2);
-
-        tamperSem->release();
-        print(id, "released the TAMPER");
-
-        print(id, "waiting for a MATCHBOX");
-        matchboxQueue.enter(id, running);
-        if (!running) { matchboxQueue.exit(); break; }
-
-        matchboxSem->acquire();
-        matchboxQueue.exit();
-
-        print(id, ">>> lighting the pipe");
-        wait(maxWait/2);
-
-        matchboxSem->release();
-        print(id, "released the MATCHBOX");
-
-        print(id, "~~~ smoking the pipe ~~~");
-        wait(maxWait);
+    ~Resources()
+    {
+        tampers.release();
+        matchboxes.release();
     }
+};
+
+void smoker(unsigned long id, unsigned long maxWait, std::atomic<bool>& running, Resources& res) {
+    while (running) {
+        res.printer.print(id, "waiting for a TAMPER");
+        res.tamperQueue.enter(id, running);
+        if (!running) break;
+        
+        res.tampers.acquire();
+        res.tamperQueue.exit();
+        
+        res.printer.print(id, ">>> tampering tobacco");
+        randomWait(maxWait/2);
+        
+        res.tampers.release();
+        res.printer.print(id, "released the TAMPER");
+        
+        res.printer.print(id, "waiting for a MATCHBOX");
+        res.matchboxQueue.enter(id, running);
+        if (!running) break;
+        
+        res.matchboxes.acquire();
+        res.matchboxQueue.exit();
+        
+        res.printer.print(id, ">>> lighting the pipe");
+        randomWait(maxWait/2);
+        
+        res.matchboxes.release();
+        res.printer.print(id, "released the MATCHBOX");
+        
+        res.printer.print(id, "~~~ smoking the pipe ~~~");
+        randomWait(maxWait);
+    }
+    
+    res.tamperQueue.exit();
+    res.matchboxQueue.exit();
 }
 
 int main(int argc, char* argv[]) {
-
     if (argc != 5) {
-        std::cerr << "Usage:\n" << "./program numSmokers numTampers numMatchboxes maxWait" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " numSmokers numTampers numMatchboxes maxWait\n";
         return 1;
     }
-    int numSmokers, numTampers, numMatchboxes, maxWait;
+    
+    unsigned long numSmokers, numTampers, numMatchboxes, maxWait;
     try {
-        numSmokers = std::stoi(argv[1]);
-        numTampers = std::stoi(argv[2]);
-        numMatchboxes = std::stoi(argv[3]);
-        maxWait = std::stoi(argv[4]);
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Invalid numeric argument: " << e.what() << std::endl;
+        numSmokers = std::stoul(argv[1]);
+        numTampers = std::stoul(argv[2]);
+        numMatchboxes = std::stoul(argv[3]);
+        maxWait = std::stoul(argv[4]);
+    } catch (const std::exception& e) {
+        std::cerr << "Invalid argument: " << e.what() << '\n';
         return 1;
     }
-
-    tamperSem = new std::counting_semaphore<MAX_SEM>(numTampers);
-    matchboxSem = new std::counting_semaphore<MAX_SEM>(numMatchboxes);
-    screenSem = new std::binary_semaphore(1);
-
+    
+    Resources resources(numMatchboxes, numTampers);
     std::atomic<bool> running{true};
-    std::vector<std::thread> smokerThreads;
-
-    for (int i = 1; i <= numSmokers; ++i)
-        smokerThreads.emplace_back(smoker, i, maxWait, std::ref(running));
-
-    std::cin.get();
-    running = false;
-
-    for(int i=0; i < numSmokers; ++i) {
-        tamperSem->release();
-        matchboxSem->release();
-        tamperQueue.exit();
-        matchboxQueue.exit();
+    std::vector<std::thread> smokers;
+    
+    for (unsigned long i = 1; i <= numSmokers; i++) {
+        smokers.emplace_back(smoker, i, maxWait, std::ref(running), std::ref(resources));
     }
-
-
-    for (auto& th : smokerThreads) th.join();
+    
+    std::cout << "Press Enter to stop...\n";
+    std::cin.get();
+    
+    running = false;
+    resources.tamperQueue.wakeAll();
+    resources.matchboxQueue.wakeAll();
+    
+    for (auto& th : smokers) {
+        th.join();
+    }
+    
     return 0;
 }
