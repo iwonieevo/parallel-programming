@@ -9,6 +9,8 @@
 #include <queue>
 #include <condition_variable>
 #include <mutex>
+#include <curses.h>
+
 
 static constexpr std::ptrdiff_t MAX_SEM = 1024;
 
@@ -33,7 +35,7 @@ public:
     }
 };
 
-std::counting_semaphore<MAX_SEM>* matchboxSem   = nullptr;
+std::counting_semaphore<MAX_SEM>* matchboxSem = nullptr;
 std::counting_semaphore<MAX_SEM>* tamperSem = nullptr;
 std::binary_semaphore* screenSem = nullptr;
 
@@ -47,7 +49,10 @@ void print(int id, const std::string& msg) {
 }
 
 void wait(int ms) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> distr(int(ms/2), ms);
+    std::this_thread::sleep_for(std::chrono::milliseconds(distr(gen)));
 }
 
 void smoker(int id, int maxWait, std::atomic<bool>& running) {
@@ -60,7 +65,7 @@ void smoker(int id, int maxWait, std::atomic<bool>& running) {
         tamperQueue.exit();
 
         print(id, ">>> tampering tobacco");
-        wait(maxWait);
+        wait(maxWait/2);
 
         tamperSem->release();
         print(id, "released the TAMPER");
@@ -73,7 +78,7 @@ void smoker(int id, int maxWait, std::atomic<bool>& running) {
         matchboxQueue.exit();
 
         print(id, ">>> lighting the pipe");
-        wait(maxWait);
+        wait(maxWait/2);
 
         matchboxSem->release();
         print(id, "released the MATCHBOX");
@@ -84,8 +89,22 @@ void smoker(int id, int maxWait, std::atomic<bool>& running) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 5) return 1;
-    int numSmokers = std::stoi(argv[1]), numTampers = std::stoi(argv[2]), numMatchboxes = std::stoi(argv[3]), maxWait = std::stoi(argv[4]);
+
+    if (argc != 5) {
+        std::cerr << "Usage:\n" << "./program numSmokers numTampers numMatchboxes maxWait" << std::endl;
+        return 1;
+    }
+    int numSmokers, numTampers, numMatchboxes, maxWait;
+    try {
+        numSmokers = std::stoi(argv[1]);
+        numTampers = std::stoi(argv[2]);
+        numMatchboxes = std::stoi(argv[3]);
+        maxWait = std::stoi(argv[4]);
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Invalid numeric argument: " << e.what() << std::endl;
+        return 1;
+    }
 
     tamperSem = new std::counting_semaphore<MAX_SEM>(numTampers);
     matchboxSem = new std::counting_semaphore<MAX_SEM>(numMatchboxes);
