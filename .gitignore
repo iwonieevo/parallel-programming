@@ -53,3 +53,7 @@
 .idea
 
 cmake-build-debug/
+
+# Python
+__pycache__/
+.venv
