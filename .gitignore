@@ -1,0 +1,8 @@
+/results
+
+*.png
+
+CMakeLists.txt
+
+.idea
+
