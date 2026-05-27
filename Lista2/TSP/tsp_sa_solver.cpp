@@ -47,6 +47,83 @@ void twoOptSwap(std::vector<size_t>& tour, size_t i, size_t j) {
     }
 }
 
+struct SAParams {
+    double   startTemp;
+    double   endTemp;
+    double   coolingRate;
+    unsigned iterPerTemp;
+};
+
+SAParams calibrateParameters(const std::vector<Node>& nodes) {
+    size_t n = nodes.size();
+
+    std::vector<size_t> tour(n);
+    std::iota(tour.begin(), tour.end(), 0);
+
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<size_t> indexDist(0, n - 1);
+
+    unsigned sampleSize       = static_cast<unsigned>(std::min(n * 20, (size_t)5000));
+    double   sumPositiveDelta = 0.0;
+    double   minPositiveDelta = std::numeric_limits<double>::max();
+    unsigned countPositive    = 0;
+
+    for (unsigned k = 0; k < sampleSize; ++k) {
+        size_t i = indexDist(rng);
+        size_t j = indexDist(rng);
+        if (i == j) continue;
+        if (i > j) std::swap(i, j);
+
+        size_t pi = (i - 1 + n) % n;
+        size_t nj = (j + 1) % n;
+
+        double removed = distance(nodes[tour[pi]], nodes[tour[i]])
+                       + distance(nodes[tour[j]], nodes[tour[nj]]);
+        double added = distance(nodes[tour[pi]], nodes[tour[j]])
+                     + distance(nodes[tour[i]], nodes[tour[nj]]);
+        double delta = added - removed;
+
+        if (delta > 0.0) {
+            sumPositiveDelta += delta;
+            minPositiveDelta = std::min(minPositiveDelta, delta);
+            ++countPositive;
+        }
+    }
+
+    if (countPositive == 0) {
+        std::cerr << "Calibration warning: no worsening moves found, using defaults.\n";
+        return {1000.0, 0.0001, 0.995, static_cast<unsigned>(n)};
+    }
+
+    double deltaAvg = sumPositiveDelta / countPositive;
+
+    double startTemp = -deltaAvg / std::log(0.9);
+
+    double endTemp = -minPositiveDelta / std::log(0.0001);
+
+    if (endTemp >= startTemp) {
+        endTemp = startTemp * 1e-5;
+    }
+
+    unsigned targetSteps = 100 * static_cast<unsigned>(n);
+    double coolingRate = std::exp(std::log(endTemp / startTemp) / targetSteps);
+    coolingRate = std::max(0.900, std::min(0.9999, coolingRate));
+
+    unsigned iterPerTemp = static_cast<unsigned>(n);
+
+    std::cout << "=== Auto-tune results ===\n"
+              << "  Samples       : " << sampleSize << "\n"
+              << "  delta_avg     : " << deltaAvg << "\n"
+              << "  delta_min     : " << minPositiveDelta << "\n"
+              << "  start-temp    : " << startTemp << "\n"
+              << "  end-temp      : " << endTemp << "\n"
+              << "  cooling-rate  : " << coolingRate << "\n"
+              << "  iter-per-temp : " << iterPerTemp << "\n"
+              << "=========================\n\n";
+
+    return {startTemp, endTemp, coolingRate, iterPerTemp};
+}
+
 std::vector<size_t> simulatedAnnealing(
     const std::vector<Node>&     nodes,
     const std::filesystem::path& progressPath,
@@ -116,6 +193,8 @@ std::vector<size_t> simulatedAnnealing(
                 size_t pi = (i - 1 + n) % n;
                 size_t nj = (j + 1) % n;
 
+                if (pi == j || nj == i) continue;
+
                 double removed = distance(nodes[localTour[pi]], nodes[localTour[i]])
                                + distance(nodes[localTour[j]],  nodes[localTour[nj]]);
                 double added   = distance(nodes[localTour[pi]], nodes[localTour[j]])
@@ -170,11 +249,12 @@ std::vector<size_t> simulatedAnnealing(
 void printUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [options]\n\n"
               << "Options:\n"
-              << "  --start-temp    <float>   Initial temperature        (default: 1000.0)\n"
-              << "  --end-temp      <float>   Final temperature          (default: 0.0001)\n"
-              << "  --cooling-rate  <float>   Multiplicative cooling     (default: 0.995)\n"
-              << "  --iter-per-temp <uint>    Iterations per temp step   (default: 1000)\n"
-              << "  --threads       <uint>    Number of OpenMP threads   (default: 1)\n"
+              << "  --start-temp    <float>   Initial temperature            (default: 1000.0)\n"
+              << "  --end-temp      <float>   Final temperature              (default: 0.0001)\n"
+              << "  --cooling-rate  <float>   Multiplicative cooling         (default: 0.995)\n"
+              << "  --iter-per-temp <uint>    Iterations per temp step       (default: 1000)\n"
+              << "  --threads       <uint>    Number of OpenMP threads       (default: 1)\n"
+              << "  --auto-tune               Calibrate parameters from data (overrides the other parameters)\n"
               << "  --help                    Show this message\n";
 }
 
@@ -184,6 +264,7 @@ int main(int argc, char* argv[]) {
     double   coolingRate = 0.995;
     unsigned iterPerTemp = 1000;
     unsigned numThreads  = 1;
+    bool     autoTune    = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -200,6 +281,7 @@ int main(int argc, char* argv[]) {
         else if (arg == "--cooling-rate"  && hasNext) { coolingRate = std::stod(argv[++i]);                         }
         else if (arg == "--iter-per-temp" && hasNext) { iterPerTemp = static_cast<unsigned>(std::stoul(argv[++i])); }
         else if (arg == "--threads"       && hasNext) { numThreads  = static_cast<unsigned>(std::stoul(argv[++i])); }
+        else if (arg == "--auto-tune")                { autoTune    = true;                                         }
         else {
             std::cerr << "Unknown or incomplete argument: " << arg << "\n\n";
             printUsage(argv[0]);
@@ -225,8 +307,7 @@ int main(int argc, char* argv[]) {
     }
     unsigned maxThreads = static_cast<unsigned>(omp_get_max_threads());
     if (numThreads > maxThreads) {
-        std::cerr << "Error: --threads " << numThreads
-                  << " exceeds available threads (" << maxThreads << ")\n";
+        std::cerr << "Error: --threads " << numThreads << " exceeds available threads (" << maxThreads << ")\n";
         return 1;
     }
 
@@ -258,6 +339,15 @@ int main(int argc, char* argv[]) {
     std::filesystem::path progressPath = runDir / "sa_progress.csv";
     std::filesystem::path tourPath     = runDir / "best_tour.csv";
 
+    if (autoTune) {
+        SAParams p = calibrateParameters(nodes);
+
+        startTemp   = p.startTemp;
+        endTemp     = p.endTemp;
+        coolingRate = p.coolingRate;
+        iterPerTemp = p.iterPerTemp;
+    }
+
     std::vector<size_t> bestTour = simulatedAnnealing(nodes, progressPath, startTemp, endTemp, coolingRate, iterPerTemp, numThreads);
 
     std::ofstream tourFile(tourPath);
@@ -274,9 +364,9 @@ int main(int argc, char* argv[]) {
     const Node& first = nodes[bestTour[0]];
     tourFile << order << "," << first.id << "," << first.x << "," << first.y << "\n";
 
-    std::cout << "\nResults saved to: " << runDir         << "\n"
-              << "  sa_progress.csv  (cost history)\n"
-              << "  best_tour.csv    (route coordinates)\n";
+    std::cout << "\nResults saved to: " << runDir << "\n"
+              << " - sa_progress.csv  (cost history)\n"
+              << " - best_tour.csv    (route coordinates)\n";
 
     return 0;
 }
